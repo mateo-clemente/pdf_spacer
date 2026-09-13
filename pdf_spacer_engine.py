@@ -45,19 +45,41 @@ def setup_logging(log_dir="logs"):
 # FUNCIONES DEL PROGRAMA
 # ==========================================
 
-def wait_for_file_ready(filepath, timeout=5):
+def wait_for_file_ready(filepath, timeout=20):
     """
-    Espera hasta que el archivo deje de estar bloqueado por el sistema operativo.
+    Espera a que el archivo deje de estar bloqueado Y su tamaño deje de cambiar
+    durante al menos 1 segundo (ideal para descargas de navegadores).
     """
     start_time = time.time()
+    last_size = -1
+
     while True:
         try:
-            os.rename(filepath, filepath)
-            return True
-        except OSError:
-            if time.time() - start_time > timeout:
+            # 1. Comprobar que el archivo realmente existe
+            if not os.path.exists(filepath):
                 return False
-            time.sleep(0.2)
+
+            # 2. Comprobar bloqueo del SO
+            os.rename(filepath, filepath)
+
+            # 3. Comprobar estabilidad del tamaño
+            current_size = os.path.getsize(filepath)
+            
+            # Si el tamaño es el mismo que hace 1 segundo y es mayor a 0 bytes, está listo
+            if current_size == last_size and current_size > 0:
+                return True
+            
+            last_size = current_size
+
+        except OSError:
+            pass # Está bloqueado, seguimos esperando en el bucle
+
+        if time.time() - start_time > timeout:
+            logging.warning(f"⏳ Timeout esperando a que el archivo esté listo: {filepath}")
+            return False
+        
+        # Pausa de 1 segundo para dar tiempo a que el navegador escriba el siguiente bloque
+        time.sleep(1)
 
 def convert_ppt_to_pdf(ppt_path: str) -> str:
     """
@@ -121,12 +143,21 @@ def pdf_blank_spacer(input_pdf, output_pdf, multiplier=2.0):
 
 def pdf_processor(input_pdf_path, output_pdf_path, pdf_multiplier):
     input_pdf = pymupdf.open(input_pdf_path)
+    
+    # RED DE SEGURIDAD: Comprobar que el PDF tiene contenido real
+    if len(input_pdf) == 0:
+        input_pdf.close()
+        raise ValueError("El documento PDF tiene 0 páginas o está corrupto. Abortando.")
+
     output_pdf = pymupdf.open()
     pdf_blank_spacer(input_pdf=input_pdf, output_pdf=output_pdf, multiplier=pdf_multiplier)
+
     output_pdf.save(output_pdf_path)
     output_pdf.close()
     input_pdf.close()
-    os.remove(input_pdf_path)
+    
+    # Nota: He quitado el os.remove() de aquí porque ya lo haces en el queue_worker. 
+    # Es mejor tener la responsabilidad de borrar centralizada en un solo sitio.
     return
 
 def queue_worker(queue: Queue, output, pdf_multiplier):
@@ -185,8 +216,12 @@ def queue_worker(queue: Queue, output, pdf_multiplier):
 
 def is_valid_file(file_path: str) -> bool:
     filename = os.path.basename(file_path)
+    # Ignorar archivos temporales explícitos
     if filename.startswith("~$") or "_temp_conv.pdf" in filename:
         return False
+    if filename.endswith(('.crdownload', '.part', '.tmp')):
+        return False
+        
     return filename.lower().endswith(('.pdf', '.ppt', '.pptx'))
 
 class Enqueuer(FileSystemEventHandler):
