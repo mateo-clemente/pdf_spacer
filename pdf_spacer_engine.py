@@ -45,41 +45,52 @@ def setup_logging(log_dir="logs"):
 # FUNCIONES DEL PROGRAMA
 # ==========================================
 
-def wait_for_file_ready(filepath, timeout=20):
+def wait_for_file_ready(filepath, timeout=60):
     """
-    Espera a que el archivo deje de estar bloqueado Y su tamaño deje de cambiar
-    durante al menos 1 segundo (ideal para descargas de navegadores).
+    Espera a que el archivo deje de estar bloqueado Y su tamaño sea estable
+    por al menos 3 comprobaciones consecutivas (útil para descargas lentas).
     """
     start_time = time.time()
     last_size = -1
+    stable_seconds = 0
 
     while True:
         try:
-            # 1. Comprobar que el archivo realmente existe
             if not os.path.exists(filepath):
                 return False
 
-            # 2. Comprobar bloqueo del SO
-            os.rename(filepath, filepath)
+            # 1. Forzar un bloqueo de lectura/escritura. 
+            # Si el navegador está descargando, esto fallará inmediatamente.
+            with open(filepath, 'r+b') as f:
+                pass 
 
-            # 3. Comprobar estabilidad del tamaño
+            # 2. Comprobar que el tamaño ha dejado de crecer
             current_size = os.path.getsize(filepath)
             
-            # Si el tamaño es el mismo que hace 1 segundo y es mayor a 0 bytes, está listo
             if current_size == last_size and current_size > 0:
-                return True
+                stable_seconds += 1
+            else:
+                stable_seconds = 0  # Reiniciamos el contador si el tamaño cambió
             
             last_size = current_size
 
-        except OSError:
-            pass # Está bloqueado, seguimos esperando en el bucle
+            # Si el archivo lleva 3 segundos exactos sin cambiar ni estar bloqueado, está listo
+            if stable_seconds >= 3:
+                return True
+
+        except (OSError, IOError, PermissionError):
+            # El archivo sigue bloqueado por el navegador/sistema
+            stable_seconds = 0 
 
         if time.time() - start_time > timeout:
-            logging.warning(f"⏳ Timeout esperando a que el archivo esté listo: {filepath}")
+            logging.warning(f"⏳ Timeout de {timeout}s alcanzado esperando a: {os.path.basename(filepath)}")
             return False
         
-        # Pausa de 1 segundo para dar tiempo a que el navegador escriba el siguiente bloque
+        # Esperamos 1 segundo antes de la siguiente comprobación
         time.sleep(1)
+
+
+
 
 def convert_ppt_to_pdf(ppt_path: str) -> str:
     """
@@ -168,10 +179,9 @@ def queue_worker(queue: Queue, output, pdf_multiplier):
             queue.task_done()
             continue
         
-        if not wait_for_file_ready(item):
-            logging.warning(f"El archivo {os.path.basename(item)} está bloqueado o copiándose muy lento. Se omitirá.")
-            queue.task_done()
-            continue
+        while not wait_for_file_ready(item):
+            logging.info(f"El archivo {os.path.basename(item)} no está listo para ser procesado.")
+
 
         filename = os.path.basename(item)
         file_ext = os.path.splitext(filename)[1].lower()
@@ -199,9 +209,10 @@ def queue_worker(queue: Queue, output, pdf_multiplier):
             )
             
             if os.path.exists(item):
+                logging.info(f"Procesado y eliminado original: {filename}")
                 os.remove(item)
                 
-            logging.info(f"Procesado y eliminado original: {filename}")
+            
 
         except Exception as e:
             logging.error(f"Error al procesar {filename}: {e}", exc_info=True)
@@ -234,16 +245,16 @@ class Enqueuer(FileSystemEventHandler):
             self.paths_queue.put(file_path)
 
     def on_created(self, event: FileSystemEvent) -> None:
-        logging.debug(f"Enqueuing {os.path.abspath(event.src_path)} from on_created")
+        logging.info(f"Enqueuing {os.path.abspath(event.src_path)} from on_created")
         self.process_event(event)
 
     def on_modified(self, event: FileSystemEvent) -> None:
-        logging.debug(f"Enqueuing {os.path.abspath(event.src_path)} from on_modified")
+        logging.info(f"Enqueuing {os.path.abspath(event.src_path)} from on_modified")
         self.process_event(event)
 
     def on_moved(self, event: FileSystemEvent) -> None:
         if not event.is_directory and is_valid_file(event.dest_path):
-            logging.debug(f"Enqueuing {os.path.abspath(event.dest_path)} from on_moved")
+            logging.info(f"Enqueuing {os.path.abspath(event.dest_path)} from on_moved")
             file_path = os.path.abspath(event.dest_path)
             self.paths_queue.put(file_path)
 
