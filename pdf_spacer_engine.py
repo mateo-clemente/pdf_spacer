@@ -13,6 +13,22 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 from pathlib import Path
 
+def wait_for_file_ready(filepath, timeout=5):
+    """
+    Espera hasta que el archivo deje de estar bloqueado por el sistema operativo
+    (por ejemplo, cuando se está copiando o descargando).
+    """
+    start_time = time.time()
+    while True:
+        try:
+            # Intentar renombrar el archivo a sí mismo es el test más seguro en Windows
+            # para saber si otro proceso (como el explorador) lo sigue escribiendo.
+            os.rename(filepath, filepath)
+            return True
+        except OSError:
+            if time.time() - start_time > timeout:
+                return False
+            time.sleep(0.2)
 
 def convert_ppt_to_pdf(ppt_path: str) -> str:
     """
@@ -99,6 +115,11 @@ def queue_worker(queue:Queue, output, pdf_multiplier):
             queue.task_done()
             continue
         
+        if not wait_for_file_ready(item):
+            print(f"⚠️ El archivo {os.path.basename(item)} está bloqueado o copiándose muy lento. Se omitirá.")
+            queue.task_done()
+            continue
+
         # Construir la ruta de salida basada en el nombre del archivo de entrada
         filename = os.path.basename(item)
         file_ext = os.path.splitext(filename)[1].lower()
