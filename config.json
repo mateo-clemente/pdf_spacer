@@ -1,8 +1,0 @@
-{
-    "input_folder": "input",
-    "output_folder": "output",
-    "width_multiplier": 2.0,
-    "scan_interval_seconds": 60,
-    "continous_mode": 1,
-    "multiplier": 2.0
-}
