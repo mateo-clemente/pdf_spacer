@@ -30,18 +30,16 @@ def setup_logging(log_dir="logs"):
         '%(asctime)s | %(levelname)-8s | %(threadName)-15s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-
-    # 1. Handler para archivo (Máximo 5MB por archivo, conserva 3 backups)
+    # 1. Archivo siempre activo
     file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
     file_handler.setFormatter(formato)
-
-    # 2. Handler para consola (Terminal)
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formato)
-
-    # Añadir los handlers al logger
     logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+
+    # 2. Consola solo si existe una ventana de comandos disponible
+    if sys.stdout is not None:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formato)
+        logger.addHandler(console_handler)
 
 # ==========================================
 # FUNCIONES DEL PROGRAMA
